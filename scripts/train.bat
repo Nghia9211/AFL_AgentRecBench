@@ -1,7 +1,6 @@
 @echo off
 setlocal
 
-:: Thiet lap thu muc lam viec
 set work_dir=.
 cd %work_dir%
 
