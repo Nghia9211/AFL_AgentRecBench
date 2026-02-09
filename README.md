@@ -1,6 +1,6 @@
-This is a source code based on AFL [^1} to run in AgentRecBen Benmark[^2].
+This is a source code based on AFL [^1] to run in AgentRecBen Benmark[^2].
 Todo :
-- Integrate Agentic RAG[^3} to Recommendation Agent in AFL to achieve higher average hit rate in AgentRecBench
+- Integrate Agentic RAG[^3] to Recommendation Agent in AFL to achieve higher average hit rate in AgentRecBench
 
 
 
