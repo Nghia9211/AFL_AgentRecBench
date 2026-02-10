@@ -1,2 +1,4 @@
 output/*
 saved_models/*
+__pycache__/
+*.pyc
