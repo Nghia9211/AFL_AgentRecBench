@@ -207,6 +207,93 @@ class UserModelAgent:
         self.info_list = read_jsonl(path)
         self.memory = [self.build_memory(info) for info in self.info_list]
 
+    # ------------------------------------------------------------------
+    # Strategy 3: Dynamic Sequence Augmentation helpers
+    # ------------------------------------------------------------------
+
+    def update_dynamic_sequence(self, data, positive_item_names):
+        """Append pseudo-interaction items to the running sequence.
+
+        Converts *positive_item_names* to SASRec item IDs and appends them to
+        the unpadded sequence stored in *data*.  The padded representation,
+        length counter, and human-readable ``seq_str`` are updated in-place so
+        that subsequent SASRec forward passes operate on the augmented history.
+
+        Items whose names cannot be resolved to a valid model ID are silently
+        skipped.
+
+        Args:
+            data: The mutable data dict for this dialogue session.
+            positive_item_names: List of item name strings to add.
+
+        Returns:
+            The number of items actually appended.
+        """
+        if not positive_item_names:
+            return 0
+
+        seq_unpad = list(data.get('seq_unpad', []))
+        padding_id = self.item_num  # SASRec uses item_num as padding token
+        added = 0
+
+        for name in positive_item_names:
+            item_id = self.name2id.get(name.strip())
+            if item_id is None or item_id >= self.item_num:
+                continue
+            # Avoid duplicate consecutive items
+            if seq_unpad and seq_unpad[-1] == item_id:
+                continue
+            seq_unpad.append(item_id)
+            added += 1
+
+        if added == 0:
+            return 0
+
+        # Truncate to the most recent seq_size items if the sequence overflows
+        if len(seq_unpad) > self.seq_size:
+            seq_unpad = seq_unpad[-self.seq_size:]
+
+        new_len = len(seq_unpad)
+        # Re-pad: [padding, padding, ..., real_items]
+        padded = [padding_id] * (self.seq_size - new_len) + seq_unpad
+
+        data['seq'] = padded
+        data['len_seq'] = new_len
+        data['seq_unpad'] = seq_unpad
+
+        # Rebuild seq_str so that LLM prompts reflect the augmented history.
+        # Mark pseudo-interactions distinctly so the LLM can tell them apart
+        # from the original purchase history.
+        if '_original_seq_str' not in data:
+            # First augmentation – stash the original values
+            data['_original_seq_str'] = data.get('seq_str', 'Empty History')
+            data['_original_seq_len'] = data.get('len_seq', 0) - added  # length before this augmentation
+
+        original_str = data['_original_seq_str']
+        original_len = data['_original_seq_len']
+
+        # All items beyond the original sequence are pseudo-interactions
+        all_pseudo_ids = seq_unpad[original_len:] if original_len >= 0 else seq_unpad
+        all_pseudo_names = [self.id2name.get(iid, f'Item_{iid}') for iid in all_pseudo_ids]
+
+        if original_str == 'Empty History':
+            data['seq_str'] = 'Inferred interests: ' + ', '.join(all_pseudo_names)
+        else:
+            data['seq_str'] = original_str + ' | Inferred interests: ' + ', '.join(all_pseudo_names)
+
+        return added
+
+    def regenerate_prior(self, data):
+        """Re-compute the SASRec prior answer using the (possibly augmented) sequence.
+
+        Should be called after :meth:`update_dynamic_sequence` so that
+        ``data['prior_answer']`` stays in sync with the updated sequence for
+        subsequent dialogue rounds.
+        """
+        data['prior_answer'] = self.model_generate(
+            data['seq'], data['len_seq'], data['cans']
+        )
+
     def model_generate(self, seq, len_seq, candidates):
         seq_b = [seq]
         len_seq_b = [len_seq]
