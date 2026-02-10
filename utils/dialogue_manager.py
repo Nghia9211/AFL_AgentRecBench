@@ -7,8 +7,8 @@ sys.path.append(parent_dir)
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from utils.regular_function import split_user_response, split_rec_reponse_top_n 
-from utils.agent import RecAgent, UserModelAgent 
+from utils.regular_function import split_user_response, split_rec_reponse_top_n, extract_positive_mentions
+from utils.agent import RecAgent, UserModelAgent
 
 def error_handler(e):
     print(f"!!! LỖI TRONG TIẾN TRÌNH CON: {e}")
@@ -65,6 +65,18 @@ def recommend(data, args):
 
         rec_agent.update_memory({"epoch": epoch, "rec_reason": rec_reason, "rec_item_list": rec_item_list, "user_reason": user_reason})
         user_agent.update_memory({"epoch": epoch, "rec_reason": rec_reason, "rec_item_list": rec_item_list, "user_reason": user_reason})
+
+        # --- Strategy 3: Dynamic Sequence Augmentation ---
+        # Extract items that the user engaged with positively (or the top-ranked
+        # recommendation as a weak signal) and inject them as pseudo-interactions
+        # into the SASRec sequence.  This progressively warms up the reward model
+        # during the dialogue, which is especially impactful for cold-start users
+        # whose initial sequence is entirely padding tokens.
+        positive_items = extract_positive_mentions(user_reason, rec_item_list)
+        added = user_agent.update_dynamic_sequence(data, positive_items)
+        if added > 0:
+            user_agent.regenerate_prior(data)
+
         epoch += 1
     
     return new_data_list, hit_at_n, args
